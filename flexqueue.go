@@ -312,6 +312,41 @@ func (q *FlexQueue) Update(digest string, message interface{}) bool {
 	return q.messages.Update(digest, message)
 }
 
+// ResetTTL will update the TTL for a message already in the queue with a new duration.
+// The callback for the existing TTL will be kept in place.
+// Returns:
+// * bool: true if the item was updated and false if message not found or TTL not found on message
+func (q *FlexQueue) ResetTTL(digest string, ttl time.Duration) bool {
+
+	q.Lock()
+	defer q.Unlock()
+
+	// Do not allow reset if the ttl for the targetted message is already expired
+	if q.pruneMessage(digest) {
+		return false
+	}
+
+	// Grab the current ttl control for the message, if it has one
+	oldCtrl, ok := q.ttl[digest]
+	if !ok {
+		return false
+	}
+
+	// Create the new ttl control using the old ttl callback,
+	// and abort now if the new ttl is already expired
+	msg, _ := q.messages.Read(digest)
+	ctrl := NewTTL(ttl, oldCtrl.Callback)
+	if ctrl.Expired() {
+		ctrl.Callback(digest, msg)
+		return false
+	}
+
+	// Replace the current ttl ctrl with the new one
+	q.ttl[digest] = *ctrl
+
+	return true
+}
+
 // Remove will delete the message from the queue. Returns true if the
 // message was found and deleted or false if not found.
 func (q *FlexQueue) Remove(digest string) bool {

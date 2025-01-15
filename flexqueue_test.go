@@ -752,6 +752,133 @@ func TestFlexQueueTTLReadUpdateHas(t *testing.T) {
 	}
 }
 
+func TestFlexQueueResetTTL(t *testing.T) {
+
+	type tcase struct {
+		Message            Message
+		WaitTime           time.Duration
+		ExpectResetSuccess bool
+		ExpectReadSuccess  bool
+	}
+
+	fn := func(tc tcase) func(t *testing.T) {
+		return func(t *testing.T) {
+
+			queue := flexqueue.NewFlexQueue()
+
+			cbFunc := func(digest string, message interface{}) {}
+
+			// push message to queue
+			if ok := queue.PushFrontTTL(tc.Message.Digest, &tc.Message, tc.Message.TTL, cbFunc); !ok {
+				t.Errorf("expected push to be ok but got not ok")
+			}
+
+			// wait for a while
+			time.Sleep(tc.WaitTime)
+
+			ok := queue.ResetTTL(tc.Message.Digest, tc.Message.TTL)
+			if (tc.ExpectResetSuccess && !ok) || (!tc.ExpectResetSuccess && ok) {
+				t.Errorf("expected reset success %v but got %v", tc.ExpectResetSuccess, ok)
+			}
+
+			// wait again
+			time.Sleep(tc.WaitTime)
+
+			_, _, ok = queue.ReadFront()
+			if (tc.ExpectReadSuccess && !ok) || (!tc.ExpectReadSuccess && ok) {
+				t.Errorf("expected read success %v but got %v", tc.ExpectReadSuccess, ok)
+			}
+		}
+	}
+
+	tcases := map[string]tcase{
+		"failed reset due to expiration": {
+			Message: Message{
+				Digest: "A",
+				TTL:    time.Millisecond * 20,
+			},
+			WaitTime:           time.Millisecond * 25,
+			ExpectResetSuccess: false,
+			ExpectReadSuccess:  false,
+		},
+		"successful reset and wait": {
+			Message: Message{
+				Digest: "A",
+				TTL:    time.Millisecond * 20,
+			},
+			WaitTime:           time.Millisecond * 15,
+			ExpectResetSuccess: true,
+			ExpectReadSuccess:  true,
+		},
+	}
+
+	for k, v := range tcases {
+		t.Run(k, fn(v))
+	}
+}
+
+func TestFlexQueueDigestMatching(t *testing.T) {
+
+	msgFoo := Message{
+		Digest: "foo",
+	}
+
+	msgBar := Message{
+		Digest: "bar",
+	}
+
+	msgFooBar := Message{
+		Digest: "foo_bar",
+	}
+
+	queue := flexqueue.NewFlexQueue()
+
+	// perform the foo insertion
+	if ok := queue.PushFront(msgFoo.Digest, msgFoo); !ok {
+		t.Errorf("expected successful push but got failed")
+	}
+
+	// verify queue len
+	if queue.Len() != 1 {
+		t.Errorf("expected queue len to be %v but got %v instead", 1, queue.Len())
+	}
+
+	// perform the bar insertion
+	if ok := queue.PushFront(msgBar.Digest, msgBar); !ok {
+		t.Errorf("expected successful push but got failed")
+	}
+
+	// verify queue len
+	if queue.Len() != 2 {
+		t.Errorf("expected queue len to be %v but got %v instead", 2, queue.Len())
+	}
+
+	// perform the foo_bar insertion
+	if ok := queue.PushFront(msgFooBar.Digest, msgFooBar); !ok {
+		t.Errorf("expected successful push but got failed")
+	}
+
+	// verify queue len
+	if queue.Len() != 3 {
+		t.Errorf("expected queue len to be %v but got %v instead", 2, queue.Len())
+	}
+
+	// perform a foo_bar read
+	fb, ok := queue.Read(msgFooBar.Digest)
+	if !ok {
+		t.Errorf("expected successful read but failed")
+	}
+
+	fbMsg, ok := fb.(Message)
+	if !ok {
+		t.Errorf("failed to type cast read message")
+	}
+
+	if fbMsg.Digest != msgFooBar.Digest {
+		t.Errorf("expected digest to be %v but got %v instead", msgFooBar.Digest, fbMsg.Digest)
+	}
+}
+
 func TestFlexQueueTTLCallback(t *testing.T) {
 
 	messages := []Message{
